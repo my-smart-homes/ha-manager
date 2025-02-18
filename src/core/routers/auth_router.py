@@ -94,7 +94,7 @@ class HomeAssistantWS:
             print('----test--',self.websocket)
             auth_required = await self.websocket.recv()
             logger.info("Authentication required")
-            auth_message = {"type": "auth", "access_token": 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiI0NzM5ZjE3MDNhNGQ0NDUxYjYwMWI2YTEyMzRmNThmYyIsImlhdCI6MTczOTgwMTU0MSwiZXhwIjoyMDU1MTYxNTQxfQ.H-mcQOdUgl5V7jaVEp_RJNIOgdelxZTGa3q2rDyH0Os'}
+            auth_message = {"type": "auth", "access_token": self.access_token}
             await self.websocket.send(json.dumps(auth_message))
             auth_response = json.loads(await self.websocket.recv())
             if auth_response.get("type") == "auth_ok":
@@ -138,10 +138,11 @@ class HomeAssistantWS:
 
 @router.post("/building/create-user/{building_id}", description="Create User via WebSocket")
 async def create_user_via_ws(
+    body: BuildingUserInputField,  # No default, this is fine here
     building_id: int = Path(..., description="The ID of the building"),
-    body: BuildingUserInputField = Depends(),
     db_session: AsyncSession = Depends(yield_db_session)
 ):
+
     print(building_id)
     building = await Building.get(db_session, building_id)
     print(building.building_url,building.access_token,'---------')
@@ -149,7 +150,7 @@ async def create_user_via_ws(
         raise HTTPException(status_code=404, detail="Building not found.")
 
     print(body)
-    client = HomeAssistantWS(url="ws://home2.msh.srvmysmarthomes.us:8002/api/websocket", access_token="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiI0NzM5ZjE3MDNhNGQ0NDUxYjYwMWI2YTEyMzRmNThmYyIsImlhdCI6MTczOTgwMTU0MSwiZXhwIjoyMDU1MTYxNTQxfQ.H-mcQOdUgl5V7jaVEp_RJNIOgdelxZTGa3q2rDyH0Os")
+    client = HomeAssistantWS(url=f"ws://{building.building_url}:8002/api/websocket", access_token=building.access_token)
     
     try:
         await client.connect()
