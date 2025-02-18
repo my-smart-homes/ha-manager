@@ -1,0 +1,66 @@
+version: 0.2
+env:
+  variables:
+    REGISTRY: example.dkr.ecr.us-east-1.amazonaws.com
+    REPOSITORY_URI: example.dkr.ecr.us-east-1.amazonaws.com/project-name
+    COVERAGE_MIN: 75
+    DOCKERHUB_USERNAME: "maitrizeroproof"
+    DOCKERHUB_PASS: "!&XMV4Y.9hqTaNm"
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.11
+  pre_build:
+    commands:
+      - echo Logging in to Docker hub..
+      - docker login --username $DOCKERHUB_USERNAME --password $DOCKERHUB_PASS
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $REGISTRY
+      - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+      - |
+        if [ "$deployment" == "main" ]; then
+          echo "building for main branch"
+          IMAGE_TAG="latest"
+        elif [ "$deployment" == "develop" ]; then
+          echo "building for develop branch"
+          IMAGE_TAG="develop"
+        else
+          IMAGE_TAG=$COMMIT_HASH
+        fi
+      - echo "Image tag is $IMAGE_TAG"
+  build:
+    on-failure: ABORT
+    commands:
+      - echo Build started on `date`
+      - echo Running unit tests...
+      - pip install -r requirements/dev.txt
+      - echo "Loading environment variables from .env.example file..."
+      - export $(cat .env.example | grep -v '^#' | xargs)
+      - pytest --junitxml=unittests.xml --cov-fail-under=$COVERAGE_MIN --cov-report=xml:coverage.xml --cov=src tests/
+      - echo Pulling build cache
+      - docker pull $REPOSITORY_URI:latest || true
+      - echo Building the Docker image...
+      - docker build -t $REPOSITORY_URI:$IMAGE_TAG .
+
+  post_build:
+    commands:
+      - echo Build completed on `date`
+      - echo Pushing the Docker image to the repository...
+      - docker push $REPOSITORY_URI:$IMAGE_TAG
+      - |
+        printf '[{ "name": "fast-api-template-prject", "imageUri": "%s" }]' $REPOSITORY_URI:$IMAGE_TAG > ImageDetail.json
+
+reports:
+  pytest_reports:
+    files:
+      - unittests.xml
+    file-format: JUNITXML
+  coverage_tests:
+    files:
+      - coverage.xml
+    file-format: COBERTURAXML
+
+artifacts:
+  files:
+    - ImageDetail.json
