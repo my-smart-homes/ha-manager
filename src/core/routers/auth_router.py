@@ -1,10 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import APIRouter, Depends, Request, Path, HTTPException
-import json
-import websockets
-import logging
-from typing import Optional
-
+from src.core.ha_websocket.main import HomeAssistantWS
 from src.core.models.building import Building
 from src.database import yield_db_session
 from src.exceptions import BadRequest, NotFound
@@ -80,62 +76,6 @@ async def delete_building(
         raise HTTPException(status_code=404, detail="Building not found.")
     return success({"message": "Building deleted successfully."})
 
-class HomeAssistantWS:
-    def __init__(self, url: str, access_token: str):
-        self.url = url
-        self.access_token = access_token
-        self.websocket: Optional[websockets.WebSocketClientProtocol] = None
-        self.message_id = 1
-
-    async def connect(self) -> None:
-        try:
-            print('------connecting----')
-            self.websocket = await websockets.connect(self.url)
-            print('----test--',self.websocket)
-            auth_required = await self.websocket.recv()
-            logger.info("Authentication required")
-            auth_message = {"type": "auth", "access_token": self.access_token}
-            await self.websocket.send(json.dumps(auth_message))
-            auth_response = json.loads(await self.websocket.recv())
-            if auth_response.get("type") == "auth_ok":
-                logger.info("Authentication successful")
-            else:
-                raise Exception("Authentication failed")
-        except Exception as e:
-            logger.error(f"Connection failed: {e}")
-            if self.websocket:
-                await self.websocket.close()
-            raise
-
-    async def create_user(self, username: str, password: str, display_name: Optional[str] = None,
-                          local_only: bool = False, administrator: bool = False) -> dict:
-        if not self.websocket:
-            raise Exception("Not connected")
-        try:
-            name = display_name if display_name else username
-            group_ids = ["system-admin"] if administrator else ["system-users"]
-            create_user_message = {"id": self.message_id, "type": "config/auth/create", "name": name, "group_ids": group_ids, "local_only": local_only}
-            await self.websocket.send(json.dumps(create_user_message))
-            user_response = await self.websocket.recv()
-            logger.info("Create User Response: %s", user_response)
-            user_data = json.loads(user_response)
-            user_id = user_data.get("result", {}).get("user", {}).get("id")
-            self.message_id += 1
-            message = {"id": self.message_id, "type": "config/auth_provider/homeassistant/create", "user_id": user_id, "username": username, "password": password}
-            self.message_id += 1
-            await self.websocket.send(json.dumps(message))
-            response = json.loads(await self.websocket.recv())
-            if "error" in response:
-                raise Exception(f"Error creating user: {response['error']}")
-            return response
-        except Exception as e:
-            logger.error(f"Failed to create user: {e}")
-            raise
-
-    async def close(self) -> None:
-        if self.websocket:
-            await self.websocket.close()
-
 @router.post("/building/create-user/{building_id}", description="Create User via WebSocket")
 async def create_user_via_ws(
     body: BuildingUserInputField,  # No default, this is fine here
@@ -150,7 +90,7 @@ async def create_user_via_ws(
         raise HTTPException(status_code=404, detail="Building not found.")
 
     print(body)
-    client = HomeAssistantWS(url=f"ws://{building.building_url}:8002/api/websocket", access_token=building.access_token)
+    client = HomeAssistantWS(domain=building.building_url, access_token=building.access_token)
     
     try:
         await client.connect()
@@ -168,3 +108,27 @@ async def create_user_via_ws(
     finally:
         await client.close()
         logger.info("WebSocket connection closed")
+
+@router.get("/building/users", description="List all users from each building")
+async def list_building_users(db_session: AsyncSession = Depends(yield_db_session)):
+    buildings = await Building.list(db_session)
+    results = {}
+
+    for building in buildings:
+        client = HomeAssistantWS(
+            domain=building.building_url,
+            access_token=building.access_token
+        )
+        try:
+            await client.connect()
+            # Send the person/list command and await the response.
+            response = await client.list_persons()
+            # Use the building name as the top-level key.
+            results[building.name] = response
+        except Exception as e:
+            logger.error(f"Error retrieving users from building {building.name}: {e}")
+            results[building.name] = {"error": str(e)}
+        finally:
+            await client.close()
+
+    return success(results)
