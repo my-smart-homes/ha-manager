@@ -15,7 +15,7 @@ class HomeAssistantWS:
     async def connect(self) -> None:
         try:
             print('------connecting----')
-            self.websocket = await websockets.connect(f"ws://{self.domain}:8002/api/websocket")
+            self.websocket = await websockets.connect(f"ws://{self.domain}/api/websocket")
             print('----test--',self.websocket)
             auth_required = await self.websocket.recv()
             logger.info("Authentication required")
@@ -72,6 +72,40 @@ class HomeAssistantWS:
             return response
         except Exception as e:
             logger.error(f"Failed to list persons: {e}")
+            raise
+    async def update_person(self, user_id: str, display_name: str, group_ids: list[str],local_only:bool) -> dict:
+        """
+        Connects to the Home Assistant websocket to update a person.
+        """
+        if not self.websocket:
+            raise Exception("Not connected")
+        try:
+            # Construct the person/update message.
+            message = {"id": self.message_id, "type": "config/auth/update", "user_id": user_id, "name": display_name,"local_only":local_only, "group_ids": group_ids}
+            self.message_id += 1
+            await self.websocket.send(json.dumps(message))
+            # Wait for and return the response.
+            response = json.loads(await self.websocket.recv())
+            return response
+        except Exception as e:
+            logger.error(f"Failed to update person: {e}")
+            raise
+    async def delete_person(self, user_id: str) -> dict:
+        """
+        Connects to the Home Assistant websocket to delete a person.
+        """
+        if not self.websocket:
+            raise Exception("Not connected")
+        try:
+            # Construct the person/delete message.
+            message = {"id": self.message_id, "type": "config/auth/delete", "user_id": user_id}
+            self.message_id += 1
+            await self.websocket.send(json.dumps(message))
+            # Wait for and return the response.
+            response = json.loads(await self.websocket.recv())
+            return response
+        except Exception as e:
+            logger.error(f"Failed to delete person: {e}")
             raise
     async def close(self) -> None:
         if self.websocket:

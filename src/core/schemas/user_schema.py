@@ -50,3 +50,15 @@ class BuildingUserInputField(CustomModel):
         exclude_defaults = True
         from_attributes = True
         exclude_unset = True
+
+class BuildingUserUpdateField(CustomModel):
+    group_ids: Optional[list[str]] = None
+    display_name: Optional[str] = None
+    local_access_only: Optional[bool] = False
+    administrator: Optional[bool] = False
+    user_id: Optional[str] = None
+
+    class Config:
+        exclude_defaults = True
+        from_attributes = True
+        exclude_unset = True
